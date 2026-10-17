@@ -61,6 +61,11 @@ def read_positions(path: Path) -> list[Position]:
     return sorted(positions, key=lambda p: p.maturity)
 
 
+def days_until(maturity: date, today: date | None = None) -> int:
+    """Calendar days from today until maturity (negative if already matured)."""
+    return (maturity - (today or date.today())).days
+
+
 def main() -> None:
     try:
         path = latest_spreadsheet()
@@ -69,6 +74,10 @@ def main() -> None:
     print(f"Source: {path}\n")
     positions = read_positions(path)
     width = max((len(p.account_name) for p in positions), default=12)
-    print(f"{'Maturity':<10}  {'Account name':<{width}}  Symbol")
+    today = date.today()
+    print(f"{'Maturity':<10}  {'Days':>4}  {'Account name':<{width}}  Symbol")
     for p in positions:
-        print(f"{p.maturity:%m/%d/%Y}  {p.account_name:<{width}}  {p.symbol}")
+        print(
+            f"{p.maturity:%m/%d/%Y}  {days_until(p.maturity, today):>4}  "
+            f"{p.account_name:<{width}}  {p.symbol}"
+        )
