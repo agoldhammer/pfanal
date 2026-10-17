@@ -20,6 +20,8 @@ class Position(NamedTuple):
     maturity: date
     account_name: str
     symbol: str
+    present_value: float
+    maturity_value: float
 
 
 def file_date(path: Path) -> datetime:
@@ -51,13 +53,23 @@ def parse_maturity(description: object) -> date | None:
 def read_positions(path: Path) -> list[Position]:
     ws = load_workbook(path, read_only=True, data_only=True).active
     positions = []
-    # Columns: A=account number, B=account name, C=symbol, D=description.
-    for row in ws.iter_rows(min_row=2, max_col=4, values_only=True):
-        _, account_name, symbol, description = row
+    # Columns: A=account number, B=account name, C=symbol, D=description,
+    # E=quantity, F=last price, G=last price change, H=current value.
+    for row in ws.iter_rows(min_row=2, max_col=8, values_only=True):
+        _, account_name, symbol, description, quantity, _, _, current_value = row
         # Skips blank rows and the disclaimer footer, which have no maturity date.
         if (maturity := parse_maturity(description)) is None:
             continue
-        positions.append(Position(maturity, str(account_name), str(symbol)))
+        # Bills are zero-coupon, so face value (quantity) is what's paid at maturity.
+        positions.append(
+            Position(
+                maturity,
+                str(account_name),
+                str(symbol),
+                float(current_value),
+                float(quantity),
+            )
+        )
     return sorted(positions, key=lambda p: p.maturity)
 
 
@@ -75,9 +87,18 @@ def main() -> None:
     positions = read_positions(path)
     width = max((len(p.account_name) for p in positions), default=12)
     today = date.today()
-    print(f"{'Maturity':<10}  {'Days':>4}  {'Account name':<{width}}  Symbol")
+    print(
+        f"{'Maturity':<10}  {'Days':>4}  {'Account name':<{width}}  {'Symbol':<9}  "
+        f"{'Present value':>15}  {'Value at maturity':>17}"
+    )
     for p in positions:
         print(
             f"{p.maturity:%m/%d/%Y}  {days_until(p.maturity, today):>4}  "
-            f"{p.account_name:<{width}}  {p.symbol}"
+            f"{p.account_name:<{width}}  {p.symbol:<9}  "
+            f"{p.present_value:>15,.2f}  {p.maturity_value:>17,.2f}"
         )
+    total_pv = sum(p.present_value for p in positions)
+    total_mv = sum(p.maturity_value for p in positions)
+    label_width = 10 + 2 + 4 + 2 + width + 2 + 9
+    print("-" * (label_width + 2 + 15 + 2 + 17))
+    print(f"{'Total':<{label_width}}  {total_pv:>15,.2f}  {total_mv:>17,.2f}")
