@@ -59,3 +59,81 @@ def test_read_positions_values(tmp_path):
     assert positions[0].maturity_value == 50000
     assert positions[1].present_value == 98790
     assert positions[1].maturity_value == 100000
+
+
+PRICE_PAGE = """
+<p>Prices For: October 19, 2026</p>
+<table>
+\t<tr><th>CUSIP</th><th>SECURITY TYPE</th><th>RATE</th><th>MATURITY DATE</th><th>CALL DATE</th><th>BUY</th><th>SELL</th><th>END OF DAY</th></tr>
+\t<tr>
+\t\t<td>912797SU2</td>
+\t\t<td style="white-space: nowrap; text-align: left">MARKET BASED BILL</td>
+\t\t<td>0.000%</td>
+\t\t<td>11/27/2026</td>
+\t\t<td></td>
+\t\t<td>99.573167</td>
+\t\t<td>99.572083</td>
+\t\t<td>99.583056</td>
+\t</tr>
+\t<tr>
+\t\t<td>912797WS2</td>
+\t\t<td style="white-space: nowrap; text-align: left">MARKET BASED BILL</td>
+\t\t<td>0.000%</td>
+\t\t<td>02/02/2027</td>
+\t\t<td></td>
+\t\t<td>0.000000</td>
+\t\t<td>98.800000</td>
+\t\t<td>98.810000</td>
+\t</tr>
+</table>
+"""
+
+
+def test_parse_price_table():
+    from pfanal import parse_price_table
+
+    assert parse_price_table(PRICE_PAGE) == {
+        "912797SU2": 99.583056,
+        "912797WS2": 98.81,
+    }
+
+
+def test_parse_price_table_empty():
+    from pfanal import parse_price_table
+
+    assert parse_price_table("<table><tr><th>CUSIP</th></tr></table>") == {}
+
+
+def test_fetch_prices_steps_back_to_latest_published_day():
+    from pfanal import fetch_prices
+
+    requested = []
+
+    def get_page(day):
+        requested.append(day)
+        return PRICE_PAGE if day == date(2026, 10, 16) else ""
+
+    price_date, prices = fetch_prices(date(2026, 10, 18), get_page)
+    assert price_date == date(2026, 10, 16)
+    assert prices["912797SU2"] == 99.583056
+    assert requested == [date(2026, 10, 18), date(2026, 10, 17), date(2026, 10, 16)]
+
+
+def test_fetch_prices_gives_up():
+    from pfanal import fetch_prices
+
+    with pytest.raises(LookupError):
+        fetch_prices(date(2026, 10, 18), lambda day: "")
+
+
+def test_reprice_uses_quoted_price_and_keeps_unquoted():
+    from pfanal import Position, reprice
+
+    quoted = Position(date(2026, 11, 27), "IRA", "912797SU2", 49700, 49785.5, 50000)
+    unquoted = Position(date(2027, 3, 1), "IRA", "912797ZZ9", 9800, 9850, 10000)
+    repriced = reprice([quoted, unquoted], {"912797SU2": 99.583056})
+
+    assert repriced[0].present_value == pytest.approx(50000 * 99.583056 / 100)
+    assert repriced[0].priced_online
+    assert repriced[1].present_value == 9850
+    assert not repriced[1].priced_online
