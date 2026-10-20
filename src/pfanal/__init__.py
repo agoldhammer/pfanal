@@ -105,8 +105,9 @@ def parse_price_table(html: str) -> dict[str, float]:
     # Cells: CUSIP, security type, rate, maturity, call date, buy, sell, end of day.
     for row in PRICE_ROW_RE.findall(html):
         cells = [c.strip() for c in PRICE_CELL_RE.findall(row)]
-        if len(cells) == 8:
-            prices[cells[0]] = float(cells[7])
+        # Today's page is published during the day with end of day still 0.
+        if len(cells) == 8 and (price := float(cells[7])) > 0:
+            prices[cells[0]] = price
     return prices
 
 

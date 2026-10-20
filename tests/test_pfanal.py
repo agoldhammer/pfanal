@@ -119,6 +119,27 @@ def test_fetch_prices_steps_back_to_latest_published_day():
     assert requested == [date(2026, 10, 18), date(2026, 10, 17), date(2026, 10, 16)]
 
 
+# Today's page during the trading day: buy/sell quoted, end of day not yet set.
+INTRADAY_PAGE = PRICE_PAGE.replace("99.583056", "0.000000").replace("98.810000", "0.000000")
+
+
+def test_parse_price_table_skips_zero_end_of_day():
+    from pfanal import parse_price_table
+
+    assert parse_price_table(INTRADAY_PAGE) == {}
+
+
+def test_fetch_prices_skips_day_without_end_of_day_prices():
+    from pfanal import fetch_prices
+
+    def get_page(day):
+        return INTRADAY_PAGE if day == date(2026, 10, 20) else PRICE_PAGE
+
+    price_date, prices = fetch_prices(date(2026, 10, 20), get_page)
+    assert price_date == date(2026, 10, 19)
+    assert prices["912797SU2"] == 99.583056
+
+
 def test_fetch_prices_gives_up():
     from pfanal import fetch_prices
 
