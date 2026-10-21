@@ -226,6 +226,39 @@ def test_main_exits_cleanly_when_no_positions(tmp_path, monkeypatch):
     import pfanal
 
     (tmp_path / "empty.csv").write_text("Account number,Account name\n")
+    monkeypatch.setattr(pfanal, "windows_downloads", lambda: None)
     monkeypatch.setattr(pfanal.latest_spreadsheet, "__defaults__", (tmp_path,))
     with pytest.raises(SystemExit, match="no positions"):
         pfanal.main()
+
+
+def test_find_spreadsheet_prefers_downloads_export(tmp_path, monkeypatch):
+    import pfanal
+
+    downloads, data = tmp_path / "Downloads", tmp_path / "data"
+    downloads.mkdir()
+    data.mkdir()
+    (data / "Portfolio_Positions_Oct-21-2026.csv").touch()
+    (downloads / "bank_statement.csv").touch()
+    monkeypatch.setattr(pfanal, "windows_downloads", lambda: downloads)
+    monkeypatch.setattr(pfanal.latest_spreadsheet, "__defaults__", (data,))
+    # Only Fidelity exports count in Downloads, so this falls back to data/.
+    assert pfanal.find_spreadsheet() == data / "Portfolio_Positions_Oct-21-2026.csv"
+
+    (downloads / "Portfolio_Positions_Oct-17-2026.csv").touch()
+    assert pfanal.find_spreadsheet() == downloads / "Portfolio_Positions_Oct-17-2026.csv"
+
+
+def test_find_spreadsheet_falls_back_without_wsl(tmp_path, monkeypatch):
+    import pfanal
+
+    (tmp_path / "positions.xlsx").touch()
+    monkeypatch.setattr(pfanal, "windows_downloads", lambda: None)
+    monkeypatch.setattr(pfanal.latest_spreadsheet, "__defaults__", (tmp_path,))
+    assert pfanal.find_spreadsheet() == tmp_path / "positions.xlsx"
+
+
+def test_data_dir_is_absolute():
+    from pfanal import DATA_DIR
+
+    assert DATA_DIR.is_absolute() and DATA_DIR.name == "data"

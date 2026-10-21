@@ -6,7 +6,7 @@ Public repo: https://github.com/agoldhammer/pfanal (branch `master`).
 
 ## Commands
 
-- `uv run pfanal` — run the report (reads from `data/`, so run from the repo root)
+- `uv run pfanal` — run the report (from elsewhere: `uv run --project ~/Prog/pfanal pfanal`)
 - `uv run pytest` — run tests
 
 Python >= 3.15, managed with uv. Only runtime dependency: openpyxl.
@@ -15,7 +15,7 @@ Python >= 3.15, managed with uv. Only runtime dependency: openpyxl.
 
 All code is in `src/pfanal/__init__.py`.
 
-- **Input:** the newest `.xlsx` or `.csv` in `data/`. Fidelity's CSV export is read directly, so no conversion is needed. "Newest" means the date in the filename (e.g. `Portfolio_Positions_Oct-17-2026.csv`), or the file's modification time if the name has no date, which also breaks ties. Excel lock files (`~$...`) are skipped. CSV numbers are strings such as `$99594.00` or `+$0.011`, and `parse_number` converts them. If no rows have a maturity date, the program exits with an error.
+- **Input:** the newest Fidelity export (`Portfolio_Positions*.xlsx` or `.csv`) in the Windows Downloads directory, found via `cmd.exe` and `wslpath`. Other files in Downloads are ignored. If there is none, or this isn't WSL, it uses the newest `.xlsx` or `.csv` of any name in the repo's `data/`, an absolute path derived from the package location, so the working directory doesn't matter. Fidelity's CSV export is read directly, so no conversion is needed. "Newest" means the date in the filename (e.g. `Portfolio_Positions_Oct-17-2026.csv`), or the file's modification time if the name has no date, which also breaks ties. Excel lock files (`~$...`) are skipped. CSV numbers are strings such as `$99594.00` or `+$0.011`, and `parse_number` converts them. If no rows have a maturity date, the program exits with an error.
 - **Columns used:** B account name, C symbol, D description, E quantity, H current value, N cost basis total.
 - **Maturity date:** the trailing `mm/dd/yyyy` at the end of the description. Rows without one are skipped, which drops blank rows and Fidelity's disclaimer footer.
 - **Cost basis:** the "Cost basis total" column. Fidelity sometimes reports `--` (no cost basis). Those positions show `--` for cost basis and gain, and are left out of the Total cost basis and the total gain percentage.

@@ -3,6 +3,7 @@
 import csv
 import http.cookiejar
 import re
+import subprocess
 import sys
 import urllib.parse
 import urllib.request
@@ -13,7 +14,10 @@ from typing import NamedTuple
 
 from openpyxl import load_workbook
 
-DATA_DIR = Path("data")
+# The repo's data/ directory, wherever pfanal is run from.
+DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+# Fidelity's export name. Downloads holds unrelated files, so only these count there.
+EXPORT_GLOB = "Portfolio_Positions*"
 
 # A mm/dd/yyyy date at the very end of the description (column D).
 MATURITY_RE = re.compile(r"(\d{2}/\d{2}/\d{4})\s*$")
@@ -62,14 +66,46 @@ def file_date(path: Path) -> datetime:
     return datetime.fromtimestamp(path.stat().st_mtime)
 
 
-def latest_spreadsheet(data_dir: Path = DATA_DIR) -> Path:
-    files = [
-        p for p in [*data_dir.glob("*.xlsx"), *data_dir.glob("*.csv")]
+def windows_downloads() -> Path | None:
+    """The Windows user's Downloads directory as a WSL path, or None if not on WSL."""
+    try:
+        # Run from a Windows drive so cmd.exe doesn't warn about a UNC working directory.
+        profile = subprocess.run(
+            ["cmd.exe", "/c", "echo %USERPROFILE%"],
+            capture_output=True, text=True, timeout=10, cwd="/mnt/c",
+        ).stdout.strip()
+        home = subprocess.run(
+            ["wslpath", "-u", profile], capture_output=True, text=True, timeout=10
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    downloads = Path(home) / "Downloads"
+    return downloads if home and downloads.is_dir() else None
+
+
+def spreadsheets(directory: Path, pattern: str = "*") -> list[Path]:
+    """The .xlsx and .csv files in a directory, skipping Excel lock files."""
+    return [
+        p for ext in ("xlsx", "csv") for p in directory.glob(f"{pattern}.{ext}")
         if not p.name.startswith("~$")
     ]
-    if not files:
-        raise FileNotFoundError(f"no .xlsx or .csv files found in {data_dir}/")
+
+
+def newest(files: list[Path]) -> Path:
     return max(files, key=lambda p: (file_date(p), p.stat().st_mtime))
+
+
+def latest_spreadsheet(data_dir: Path = DATA_DIR) -> Path:
+    if not (files := spreadsheets(data_dir)):
+        raise FileNotFoundError(f"no .xlsx or .csv files found in {data_dir}/")
+    return newest(files)
+
+
+def find_spreadsheet() -> Path:
+    """The newest Fidelity export in Windows Downloads, else the newest file in data/."""
+    if (downloads := windows_downloads()) and (files := spreadsheets(downloads, EXPORT_GLOB)):
+        return newest(files)
+    return latest_spreadsheet()
 
 
 def parse_maturity(description: object) -> date | None:
@@ -195,7 +231,7 @@ def fmt(value: float | None, width: int, spec: str, suffix: str = "") -> str:
 
 def main() -> None:
     try:
-        path = latest_spreadsheet()
+        path = find_spreadsheet()
     except FileNotFoundError as e:
         sys.exit(f"error: {e}")
     print(f"Source: {path}\n")
