@@ -6,8 +6,11 @@ Public repo: https://github.com/agoldhammer/pfanal (branch `master`).
 
 ## Commands
 
-- `uv run pfanal` — run the report (from elsewhere: `uv run --project ~/Prog/pfanal pfanal`)
+- `pfanal` — run the report from any directory (installed as an editable uv tool, see below)
+- `uv run pfanal` — run the report from the repo without the tool install
 - `uv run pytest` — run tests
+
+Installed with `uv tool install -e ~/Prog/pfanal`, which puts `pfanal` in `~/.local/bin`. Editable mode runs the repo's code directly, so code edits take effect immediately and `data/` resolves to the repo. After changing dependencies in `pyproject.toml`, reinstall with `uv tool install -e --reinstall ~/Prog/pfanal`. A non-editable install would break the `data/` fallback, since `DATA_DIR` is derived from the package location.
 
 Python >= 3.15, managed with uv. Only runtime dependency: openpyxl.
 
