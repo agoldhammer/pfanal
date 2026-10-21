@@ -158,3 +158,74 @@ def test_reprice_uses_quoted_price_and_keeps_unquoted():
     assert repriced[0].priced_online
     assert repriced[1].present_value == 9850
     assert not repriced[1].priced_online
+
+
+CSV_EXPORT = (
+    "﻿Account number,Account name,Symbol,Description,Quantity,Last price,"
+    "Last price change,Current value,Today's gain/loss dollar,"
+    "Today's gain/loss percent,Total gain/loss dollar,Total gain/loss percent,"
+    "Percent of account,Cost basis total,Average cost basis,Type\n"
+    "1,IRA,912797WS2,TREAS BILLS 0.00000% 02/02/2027,100000,$98.79,+$0.041,"
+    "$98790.00,$41.00,0.04%,+$790.00,+0.81%,10.00%,$98000.00,--,Cash,\n"
+    "2,Joint,912797SU2,TREAS BILLS 0.00000% 11/27/2026,10000,$99.594,+$0.011,"
+    "$9959.40,$0.00,0.00%,--,--,5.00%,--,--,Cash,\n"
+    "\n"
+    '"Disclaimer footer text"\n'
+)
+
+
+def test_read_positions_from_csv(tmp_path):
+    from pfanal import read_positions
+
+    path = tmp_path / "p.csv"
+    path.write_text(CSV_EXPORT, encoding="utf-8")
+
+    positions = read_positions(path)
+    assert [p.symbol for p in positions] == ["912797SU2", "912797WS2"]
+    assert positions[1].account_name == "IRA"
+    assert positions[1].cost_basis == 98000
+    assert positions[1].present_value == 98790
+    assert positions[1].maturity_value == 100000
+    assert positions[1].gain == 790
+
+
+def test_missing_cost_basis_has_no_gain(tmp_path):
+    from pfanal import read_positions
+
+    path = tmp_path / "p.csv"
+    path.write_text(CSV_EXPORT, encoding="utf-8")
+
+    no_basis = read_positions(path)[0]
+    assert no_basis.cost_basis is None
+    assert no_basis.gain is None
+    assert no_basis.gain_pct is None
+    assert no_basis.present_value == 9959.40
+
+
+def test_parse_number():
+    from pfanal import parse_number
+
+    assert parse_number("$99,594.00") == 99594
+    assert parse_number("+$0.011") == 0.011
+    assert parse_number("-$1.50") == -1.5
+    assert parse_number("--") is None
+    assert parse_number("") is None
+    assert parse_number(None) is None
+    assert parse_number(42) == 42
+
+
+def test_latest_spreadsheet_includes_csv(tmp_path):
+    from pfanal import latest_spreadsheet
+
+    (tmp_path / "Portfolio_Positions_Oct-17-2026.xlsx").touch()
+    (tmp_path / "Portfolio_Positions_Oct-21-2026.csv").touch()
+    assert latest_spreadsheet(tmp_path).name == "Portfolio_Positions_Oct-21-2026.csv"
+
+
+def test_main_exits_cleanly_when_no_positions(tmp_path, monkeypatch):
+    import pfanal
+
+    (tmp_path / "empty.csv").write_text("Account number,Account name\n")
+    monkeypatch.setattr(pfanal.latest_spreadsheet, "__defaults__", (tmp_path,))
+    with pytest.raises(SystemExit, match="no positions"):
+        pfanal.main()

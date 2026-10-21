@@ -1,11 +1,12 @@
-"""List positions from the newest portfolio spreadsheet, sorted by maturity date."""
+"""List positions from the newest portfolio export, sorted by maturity date."""
 
+import csv
 import http.cookiejar
 import re
 import sys
 import urllib.parse
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import NamedTuple
@@ -32,18 +33,22 @@ class Position(NamedTuple):
     maturity: date
     account_name: str
     symbol: str
-    cost_basis: float
+    cost_basis: float | None  # None when Fidelity shows "--"
     present_value: float
     maturity_value: float
     priced_online: bool = False
 
     @property
-    def gain(self) -> float:
+    def gain(self) -> float | None:
+        if self.cost_basis is None:
+            return None
         return self.present_value - self.cost_basis
 
     @property
-    def gain_pct(self) -> float:
+    def gain_pct(self) -> float | None:
         """Gain to date as a percentage of cost basis."""
+        if self.cost_basis is None:
+            return None
         return self.gain / self.cost_basis * 100
 
 
@@ -58,9 +63,12 @@ def file_date(path: Path) -> datetime:
 
 
 def latest_spreadsheet(data_dir: Path = DATA_DIR) -> Path:
-    files = [p for p in data_dir.glob("*.xlsx") if not p.name.startswith("~$")]
+    files = [
+        p for p in [*data_dir.glob("*.xlsx"), *data_dir.glob("*.csv")]
+        if not p.name.startswith("~$")
+    ]
     if not files:
-        raise FileNotFoundError(f"no .xlsx files found in {data_dir}/")
+        raise FileNotFoundError(f"no .xlsx or .csv files found in {data_dir}/")
     return max(files, key=lambda p: (file_date(p), p.stat().st_mtime))
 
 
@@ -73,13 +81,40 @@ def parse_maturity(description: object) -> date | None:
     return None
 
 
+def parse_number(value: object) -> float | None:
+    """A cell as a number; CSV cells look like "$99594.00" or "+$0.011", "--" if absent."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip().replace("$", "").replace(",", "")
+        try:
+            return float(text)
+        except ValueError:
+            return None
+    return None
+
+
+def data_rows(path: Path) -> Iterator[tuple]:
+    """Rows after the header, from either an .xlsx or a .csv export."""
+    if path.suffix.lower() == ".csv":
+        # Fidelity's CSV starts with a byte-order mark.
+        with path.open(newline="", encoding="utf-8-sig") as f:
+            reader = csv.reader(f)
+            next(reader, None)
+            yield from (tuple(row) for row in reader)
+    else:
+        ws = load_workbook(path, read_only=True, data_only=True).active
+        yield from ws.iter_rows(min_row=2, max_col=14, values_only=True)
+
+
 def read_positions(path: Path) -> list[Position]:
-    ws = load_workbook(path, read_only=True, data_only=True).active
     positions = []
     # Columns: A=account number, B=account name, C=symbol, D=description,
     # E=quantity, F=last price, G=last price change, H=current value,
     # I-M=gain/loss and percent of account, N=cost basis total.
-    for row in ws.iter_rows(min_row=2, max_col=14, values_only=True):
+    for row in data_rows(path):
+        # Footer rows are shorter than a position row.
+        row = (*row, *[None] * (14 - len(row)))
         _, account_name, symbol, description, quantity, _, _, current_value = row[:8]
         cost_basis = row[13]
         # Skips blank rows and the disclaimer footer, which have no maturity date.
@@ -91,9 +126,9 @@ def read_positions(path: Path) -> list[Position]:
                 maturity,
                 str(account_name),
                 str(symbol),
-                float(cost_basis),
-                float(current_value),
-                float(quantity),
+                parse_number(cost_basis),
+                parse_number(current_value),
+                parse_number(quantity),
             )
         )
     return sorted(positions, key=lambda p: p.maturity)
@@ -152,6 +187,12 @@ def days_until(maturity: date, today: date | None = None) -> int:
     return (maturity - (today or date.today())).days
 
 
+def fmt(value: float | None, width: int, spec: str, suffix: str = "") -> str:
+    """Format a number right-aligned in width, or "--" if it is missing."""
+    text = "--" if value is None else f"{value:{spec}}{suffix}"
+    return f"{text:>{width}}"
+
+
 def main() -> None:
     try:
         path = latest_spreadsheet()
@@ -159,6 +200,8 @@ def main() -> None:
         sys.exit(f"error: {e}")
     print(f"Source: {path}\n")
     positions = read_positions(path)
+    if not positions:
+        sys.exit(f"error: no positions with maturity dates found in {path}")
     today = date.today()
     try:
         price_date, prices = fetch_prices(today)
@@ -178,17 +221,25 @@ def main() -> None:
         print(
             f"{p.maturity:%m/%d/%Y}  {days_until(p.maturity, today):>4}  "
             f"{p.account_name:<{width}}  {p.symbol:<9}  "
-            f"{p.cost_basis:>15,.2f}  {p.present_value:>15,.2f}  {p.gain_pct:>11.3f}%  "
+            f"{fmt(p.cost_basis, 15, ',.2f')}  {p.present_value:>15,.2f}  "
+            f"{fmt(p.gain_pct, 12, '.3f', '%')}  "
             f"{p.maturity_value:>17,.2f}{'' if p.priced_online else '  *'}"
         )
-    total_cb = sum(p.cost_basis for p in positions)
+    # Gain is measured only over positions whose cost basis is known.
+    with_cb = [p for p in positions if p.cost_basis is not None]
+    total_cb = sum(p.cost_basis for p in with_cb)
+    total_gain_pct = (
+        (sum(p.present_value for p in with_cb) - total_cb) / total_cb * 100 if total_cb else None
+    )
     total_pv = sum(p.present_value for p in positions)
     total_mv = sum(p.maturity_value for p in positions)
     label_width = 10 + 2 + 4 + 2 + width + 2 + 9
     print("-" * (label_width + 2 + 15 + 2 + 15 + 2 + 12 + 2 + 17))
     print(
         f"{'Total':<{label_width}}  {total_cb:>15,.2f}  {total_pv:>15,.2f}  "
-        f"{(total_pv - total_cb) / total_cb * 100:>11.3f}%  {total_mv:>17,.2f}"
+        f"{fmt(total_gain_pct, 12, '.3f', '%')}  {total_mv:>17,.2f}"
     )
+    if len(with_cb) < len(positions):
+        print("\n-- no cost basis reported; total gain excludes these positions")
     if not all(p.priced_online for p in positions):
         print("\n* present value from the spreadsheet (no online price found)")
