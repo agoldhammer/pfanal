@@ -27,6 +27,10 @@ All code is in `src/pfanal/__init__.py`.
 - **Value at maturity:** the "Quantity" column (face amount). This is correct only for zero-coupon instruments such as T-bills, which every current holding is. Coupon-paying notes or bonds would need their final coupon added.
 - **Output:** rows sorted by maturity, then a separator line and a Total row summing cost basis, present value and value at maturity, plus the overall gain percentage.
 
+## Maturity emails
+
+`maturing.py` (repo root, outside the package) reads the newest `Portfolio_Positions*.csv` in Windows Downloads (CSV only, unlike `pfanal`), falling back to the newest `.csv` in `data/` with a warning, and emails one message listing each position maturing on the day it runs: maturity date, amount (face value), account name and CUSIP. If nothing matures, it sends nothing. It sends by running the Gmail API helper `~/Prog/scripts/gmail/gmail_send.py` (OAuth `token.json` there, no password; shared with the poll-update jobs) through `uv run`, which keeps the Google libraries out of pfanal's dependencies. The recipient is `MAIL_TO`, which `--to` overrides. `--dry-run` prints the message without sending it, and `--date YYYY-MM-DD` checks another day. The user's crontab runs it at 9:00 on weekdays via `uv run --project`, logging to `~/.local/state/pfanal/maturing.log`. The crontab sets `PATH` to include `/mnt/c/Windows/system32`, since cron's default `PATH` has no `cmd.exe` and the Downloads lookup would fail. Cron runs only while WSL is up.
+
 ## Data privacy
 
 The repo is public. `data/`, `*.xlsx` and `*.csv` are gitignored and must stay that way. Never commit real account numbers, account names or holdings, including in tests. Tests build synthetic spreadsheets in `tmp_path`.

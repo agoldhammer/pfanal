@@ -21,3 +21,7 @@ build-backend = "uv_build"
 dev = [
     "pytest>=9.1.1",
 ]
+
+[tool.pytest.ini_options]
+# maturing.py lives at the repo root, outside the package.
+pythonpath = ["."]
