@@ -170,16 +170,26 @@ def read_positions(path: Path) -> list[Position]:
     return sorted(positions, key=lambda p: p.maturity)
 
 
-def parse_price_table(html: str) -> dict[str, float]:
-    """Map CUSIP to end-of-day price (per 100 face) from a TreasuryDirect price page."""
+def parse_price_table(html: str) -> tuple[dict[str, float], str]:
+    """Map CUSIP to price (per 100 face) from a TreasuryDirect price page.
+
+    Uses the end of day price, or the sell price where end of day is still 0,
+    and returns which of the two ("end of day" or "sell") was used.
+    """
     prices = {}
+    basis = "end of day"
     # Cells: CUSIP, security type, rate, maturity, call date, buy, sell, end of day.
     for row in PRICE_ROW_RE.findall(html):
         cells = [c.strip() for c in PRICE_CELL_RE.findall(row)]
-        # Today's page is published during the day with end of day still 0.
-        if len(cells) == 8 and (price := float(cells[7])) > 0:
+        if len(cells) != 8:
+            continue
+        # End of day stays 0 until the next business day, but sell is quoted.
+        if (price := float(cells[7])) > 0:
             prices[cells[0]] = price
-    return prices
+        elif (price := float(cells[6])) > 0:
+            prices[cells[0]] = price
+            basis = "sell"
+    return prices, basis
 
 
 def treasurydirect_page(day: date) -> str:
@@ -199,12 +209,13 @@ def treasurydirect_page(day: date) -> str:
 
 def fetch_prices(
     today: date, get_page: Callable[[date], str] = treasurydirect_page
-) -> tuple[date, dict[str, float]]:
+) -> tuple[date, dict[str, float], str]:
     """Prices from the most recent day on or before today that has them published."""
     for back in range(PRICE_LOOKBACK_DAYS):
         day = today - timedelta(days=back)
-        if prices := parse_price_table(get_page(day)):
-            return day, prices
+        prices, basis = parse_price_table(get_page(day))
+        if prices:
+            return day, prices, basis
     raise LookupError(f"no Treasury prices published in the {PRICE_LOOKBACK_DAYS} days to {today}")
 
 
@@ -240,12 +251,12 @@ def main() -> None:
         sys.exit(f"error: no positions with maturity dates found in {path}")
     today = date.today()
     try:
-        price_date, prices = fetch_prices(today)
+        price_date, prices, basis = fetch_prices(today)
     except (OSError, LookupError, AttributeError) as e:
         print(f"warning: could not fetch Treasury prices ({e}); "
               "using spreadsheet values\n", file=sys.stderr)
     else:
-        print(f"Prices: TreasuryDirect end of day, {price_date:%m/%d/%Y}\n")
+        print(f"Prices: TreasuryDirect {basis}, {price_date:%m/%d/%Y}\n")
         positions = reprice(positions, prices)
     width = max((len(p.account_name) for p in positions), default=12)
     print(

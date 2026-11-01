@@ -92,16 +92,17 @@ PRICE_PAGE = """
 def test_parse_price_table():
     from pfanal import parse_price_table
 
-    assert parse_price_table(PRICE_PAGE) == {
-        "912797SU2": 99.583056,
-        "912797WS2": 98.81,
-    }
+    assert parse_price_table(PRICE_PAGE) == (
+        {"912797SU2": 99.583056, "912797WS2": 98.81},
+        "end of day",
+    )
 
 
 def test_parse_price_table_empty():
     from pfanal import parse_price_table
 
-    assert parse_price_table("<table><tr><th>CUSIP</th></tr></table>") == {}
+    prices, _ = parse_price_table("<table><tr><th>CUSIP</th></tr></table>")
+    assert prices == {}
 
 
 def test_fetch_prices_steps_back_to_latest_published_day():
@@ -113,31 +114,45 @@ def test_fetch_prices_steps_back_to_latest_published_day():
         requested.append(day)
         return PRICE_PAGE if day == date(2026, 10, 16) else ""
 
-    price_date, prices = fetch_prices(date(2026, 10, 18), get_page)
+    price_date, prices, basis = fetch_prices(date(2026, 10, 18), get_page)
     assert price_date == date(2026, 10, 16)
     assert prices["912797SU2"] == 99.583056
+    assert basis == "end of day"
     assert requested == [date(2026, 10, 18), date(2026, 10, 17), date(2026, 10, 16)]
 
 
-# Today's page during the trading day: buy/sell quoted, end of day not yet set.
+# A page whose end of day prices aren't filled in yet (today's during the
+# trading day, or the last business day's until the next one): sell is quoted.
 INTRADAY_PAGE = PRICE_PAGE.replace("99.583056", "0.000000").replace("98.810000", "0.000000")
 
 
-def test_parse_price_table_skips_zero_end_of_day():
+def test_parse_price_table_falls_back_to_sell_price():
     from pfanal import parse_price_table
 
-    assert parse_price_table(INTRADAY_PAGE) == {}
+    assert parse_price_table(INTRADAY_PAGE) == (
+        {"912797SU2": 99.572083, "912797WS2": 98.8},
+        "sell",
+    )
 
 
-def test_fetch_prices_skips_day_without_end_of_day_prices():
+def test_parse_price_table_skips_zero_end_of_day_and_sell():
+    from pfanal import parse_price_table
+
+    page = INTRADAY_PAGE.replace("99.572083", "0.000000").replace("98.800000", "0.000000")
+    prices, _ = parse_price_table(page)
+    assert prices == {}
+
+
+def test_fetch_prices_uses_sell_price_when_end_of_day_missing():
     from pfanal import fetch_prices
 
     def get_page(day):
         return INTRADAY_PAGE if day == date(2026, 10, 20) else PRICE_PAGE
 
-    price_date, prices = fetch_prices(date(2026, 10, 20), get_page)
-    assert price_date == date(2026, 10, 19)
-    assert prices["912797SU2"] == 99.583056
+    price_date, prices, basis = fetch_prices(date(2026, 10, 20), get_page)
+    assert price_date == date(2026, 10, 20)
+    assert prices["912797SU2"] == 99.572083
+    assert basis == "sell"
 
 
 def test_fetch_prices_gives_up():
